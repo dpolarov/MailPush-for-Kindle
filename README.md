@@ -467,3 +467,21 @@ git push origin v1.0.0
 Push тега `v*` автоматически создаст GitHub Release и приложит ZIP. Также workflow можно запустить вручную через **Actions → Release → Run workflow**, указав тег, например `v1.0.0`.
 
 Используется встроенный `GITHUB_TOKEN` репозитория, поэтому отдельный Personal Access Token или secret для обычной публикации релиза не требуется. Workflow запрашивает разрешение `contents: write`.
+
+---
+
+## GitHub Actions release troubleshooting
+
+The release workflow intentionally runs `scripts/build.sh` as `sh ./scripts/build.sh` instead of executing the file directly. This avoids `exit code 126` when the executable bit was lost while the repository was created from a ZIP or copied from Windows.
+
+This project has no third-party Go modules, so `actions/setup-go` caching is disabled. A missing `go.sum` is therefore normal and should not produce a cache warning.
+
+If a tag such as `v1.0.0` already exists but its first release workflow failed, push the workflow fix to `main`, then open **Actions → Release → Run workflow**, enter the existing tag (`v1.0.0`), and run it. The workflow will create the missing GitHub Release (or update it) and attach `mailpush.koplugin-bilingual.zip`.
+
+### Устранение проблем с GitHub Actions Release
+
+Workflow запускает `scripts/build.sh` через `sh ./scripts/build.sh`, а не напрямую. Это предотвращает ошибку `exit code 126`, если executable-bit файла потерялся при создании репозитория из ZIP или при копировании через Windows.
+
+В проекте нет сторонних Go-модулей, поэтому кеш `actions/setup-go` отключён. Отсутствие `go.sum` для этого проекта нормально.
+
+Если тег, например `v1.0.0`, уже существует, но первый workflow релиза завершился ошибкой, сначала отправьте исправление workflow в `main`, затем откройте **Actions → Release → Run workflow**, укажите существующий тег (`v1.0.0`) и запустите workflow. Он создаст отсутствующий GitHub Release (или обновит существующий) и прикрепит `mailpush.koplugin-bilingual.zip`.

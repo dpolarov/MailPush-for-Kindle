@@ -1,22 +1,27 @@
 name: test
+
 on:
   push:
   pull_request:
+
 jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.23.x'
+          cache: false
       - run: go test ./...
       - run: go vet ./...
       - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -o /tmp/mailpush-armv7 ./cmd/mailpush
-      - run: test "$(file /tmp/mailpush-armv7)" != ""
+      - run: file /tmp/mailpush-armv7 | grep -q 'ARM'
+
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: ./scripts/build.sh
+      - uses: actions/checkout@v7
+      - run: sh ./scripts/build.sh
       - run: test -s dist/mailpush.koplugin.zip
+      - run: unzip -t dist/mailpush.koplugin.zip
