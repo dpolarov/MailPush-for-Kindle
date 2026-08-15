@@ -1,0 +1,8 @@
+services:
+  build:
+    build:
+      context: .
+      target: package
+    volumes:
+      - ./dist:/out
+    command: ["sh", "-c", "cp -f /dist/* /out/ && ls -lh /out"]
