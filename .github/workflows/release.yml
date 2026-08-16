@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (for example v1.0.0)"
+        description: "Release tag (for example v1.1.0)"
         required: true
         type: string
 
@@ -36,9 +36,20 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Resolve release tag
+        id: release_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build release archive with Docker
-        # Run via sh intentionally: executable mode can be lost when a project is
-        # initially uploaded to GitHub from a ZIP/Windows filesystem.
+        env:
+          VERSION: ${{ steps.release_tag.outputs.tag }}
         run: sh ./scripts/build.sh
 
       - name: Verify archive
@@ -59,17 +70,6 @@ jobs:
           path: dist/mailpush.koplugin-bilingual.zip
           if-no-files-found: error
 
-      - name: Resolve release tag
-        id: release_tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Create GitHub Release and upload ZIP
         env:
           GH_TOKEN: ${{ github.token }}
@@ -77,19 +77,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           if ! git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
             git tag "$RELEASE_TAG" "$GITHUB_SHA"
             git push origin "$RELEASE_TAG"
           fi
-
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" \
-              dist/mailpush.koplugin-bilingual.zip \
-              --clobber
+            gh release upload "$RELEASE_TAG" dist/mailpush.koplugin-bilingual.zip --clobber
           else
-            gh release create "$RELEASE_TAG" \
-              dist/mailpush.koplugin-bilingual.zip \
-              --title "MailPush for KOReader $RELEASE_TAG" \
-              --generate-notes
+            gh release create "$RELEASE_TAG" dist/mailpush.koplugin-bilingual.zip --title "MailPush for KOReader $RELEASE_TAG" --generate-notes
           fi
