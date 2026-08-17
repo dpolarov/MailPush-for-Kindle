@@ -1,10 +1,12 @@
 local ConfirmBox = require("ui/widget/confirmbox")
 local DataStorage = require("datastorage")
+local Device = require("device")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
 local JSON = require("json")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
+local Archiver = require("ffi/archiver")
 
 local source = debug.getinfo(1, "S").source
 local plugin_dir = source:match("^@(.+)/[^/]+$") or "."
@@ -17,6 +19,9 @@ local binary_path = plugin_dir .. "/bin/mailpush"
 local ca_bundle_path = plugin_dir .. "/cacert.pem"
 local default_config_path = plugin_dir .. "/config.default.json"
 local UPDATE_SNOOZE_SECONDS = 30 * 24 * 60 * 60
+local UPDATE_MAX_BYTES = 32 * 1024 * 1024
+local UPDATE_MAX_UNPACKED = 64 * 1024 * 1024
+local UPDATE_MAX_FILES = 256
 
 local MailPush = WidgetContainer:extend{ name = "mailpush", is_doc_only = false }
 
@@ -57,6 +62,12 @@ local function save_config(cfg)
     return true
 end
 local function basename(p) return tostring(p):match("([^/]+)$") or tostring(p) end
+local function rm_rf(path) os.execute("rm -rf " .. shell_quote(path)) end
+local function normalize_archive_path(path)
+    local p = tostring(path or ""):gsub("\\", "/"):gsub("/+", "/")
+    while p:sub(1,2) == "./" do p = p:sub(3) end
+    return p
+end
 
 function MailPush:show(text, warning)
     UIManager:show(InfoMessage:new{ text = text, icon = warning and "notice-warning" or nil })
@@ -68,7 +79,7 @@ function MailPush:backend(command, extra_args, quiet)
     for _, a in ipairs(extra_args or {}) do table.insert(parts, a) end
     table.insert(parts, command); table.insert(parts, "2>&1")
     if not quiet then
-        local text = command == "test" and "Testing IMAP connection…" or command == "install-update" and "Installing MailPush update…" or "Checking mail…"
+        local text = command == "test" and "Testing IMAP connection…" or "Checking mail…"
         self:show(text)
     end
     local pipe = io.popen(table.concat(parts, " "), "r")
@@ -107,19 +118,85 @@ end
 function MailPush:snooze_updates()
     write_atomic(update_state_path, JSON.encode({ snooze_until = os.time() + UPDATE_SNOOZE_SECONDS }) .. "\n")
 end
+
+function MailPush:validate_update_archive(path)
+    local arc = Archiver.Reader:new()
+    if not arc:open(path) then return false, "Cannot open downloaded update archive." end
+    local count, total = 0, 0
+    local ok, err = true, nil
+    for entry in arc:iterate() do
+        count = count + 1
+        local p = normalize_archive_path(entry.path)
+        local size = tonumber(entry.size or 0) or 0
+        total = total + size
+        if count > UPDATE_MAX_FILES then ok, err = false, "Update archive contains too many files."; break end
+        if total > UPDATE_MAX_UNPACKED then ok, err = false, "Update archive is too large after unpacking."; break end
+        if p:sub(1,1) == "/" or p == ".." or p:sub(1,3) == "../" or p:find("/../", 1, true) then
+            ok, err = false, "Update archive contains an unsafe path."; break
+        end
+        if p ~= "mailpush.koplugin" and p:sub(1,20) ~= "mailpush.koplugin/" then
+            ok, err = false, "Update archive has an unexpected layout."; break
+        end
+        if entry.mode ~= "file" and entry.mode ~= "directory" then
+            ok, err = false, "Update archive contains an unsupported file type."; break
+        end
+    end
+    arc:close()
+    if count == 0 then return false, "Update archive is empty." end
+    return ok, err
+end
+
 function MailPush:install_update(info)
-    local args = { "--plugin-dir", shell_quote(plugin_dir), "--asset-url", shell_quote(info.asset_url) }
-    if info.asset_digest and info.asset_digest ~= "" then table.insert(args,"--asset-digest"); table.insert(args,shell_quote(info.asset_digest)) end
-    local result = self:backend("install-update", args, false)
-    if result and result.ok then
-        os.remove(update_state_path)
-        UIManager:show(ConfirmBox:new{
-            text = "MailPush " .. tostring(info.latest_version) .. " was installed successfully.\n\nRestart KOReader now to load the new version?",
-            ok_text = "Restart",
-            cancel_text = "Later",
-            ok_callback = function() UIManager:restartKOReader() end,
-        })
-    else self:show_result(result) end
+    local downloader_path = plugin_dir .. "/updater_download.lua"
+    local loader, load_err = loadfile(downloader_path)
+    if not loader then self:show("Updater downloader is missing or invalid: " .. tostring(load_err), true); return end
+    local ok_mod, downloader = pcall(loader)
+    if not ok_mod or type(downloader) ~= "table" or type(downloader.download) ~= "function" then
+        self:show("Updater downloader could not be loaded.", true); return
+    end
+
+    local update_zip = settings_dir .. "/mailpush-update.zip"
+    local staging = settings_dir .. "/mailpush-update-stage"
+    local backup = plugin_dir .. ".previous"
+    os.remove(update_zip); rm_rf(staging)
+    self:show("Downloading MailPush " .. tostring(info.latest_version) .. "…")
+    local downloaded, download_err = downloader.download(info.asset_url, update_zip, UPDATE_MAX_BYTES)
+    if not downloaded then self:show(download_err or "Update download failed.", true); return end
+
+    local safe, safe_err = self:validate_update_archive(update_zip)
+    if not safe then os.remove(update_zip); self:show(safe_err or "Update archive validation failed.", true); return end
+
+    rm_rf(staging)
+    os.execute("mkdir -p " .. shell_quote(staging))
+    local unpacked, unpack_err = Device:unpackArchive(update_zip, staging, false)
+    if not unpacked then rm_rf(staging); os.remove(update_zip); self:show("Cannot unpack update: " .. tostring(unpack_err), true); return end
+
+    local staged_plugin = staging .. "/mailpush.koplugin"
+    local required = { "_meta.lua", "main.lua", "config.default.json", "cacert.pem", "bin/mailpush", "updater_download.lua" }
+    for _, rel in ipairs(required) do
+        if not read_all(staged_plugin .. "/" .. rel) then
+            rm_rf(staging); os.remove(update_zip); self:show("Update archive is missing required file: " .. rel, true); return
+        end
+    end
+    os.execute("chmod 755 " .. shell_quote(staged_plugin .. "/bin/mailpush"))
+
+    rm_rf(backup)
+    local moved_old, move_old_err = os.rename(plugin_dir, backup)
+    if not moved_old then rm_rf(staging); os.remove(update_zip); self:show("Cannot create plugin backup: " .. tostring(move_old_err), true); return end
+    local moved_new, move_new_err = os.rename(staged_plugin, plugin_dir)
+    if not moved_new then
+        os.rename(backup, plugin_dir)
+        rm_rf(staging); os.remove(update_zip)
+        self:show("Cannot install update; previous version was restored: " .. tostring(move_new_err), true); return
+    end
+
+    rm_rf(staging); os.remove(update_zip); os.remove(update_state_path)
+    UIManager:show(ConfirmBox:new{
+        text = "MailPush " .. tostring(info.latest_version) .. " was installed successfully.\n\nRestart KOReader now to load the new version?",
+        ok_text = "Restart",
+        cancel_text = "Later",
+        ok_callback = function() UIManager:restartKOReader() end,
+    })
 end
 function MailPush:check_update(force)
     if not force and self:update_snoozed() then return end
@@ -161,7 +238,11 @@ function MailPush:reset_history()
 end
 function MailPush:show_paths() self:show("Configuration:\n"..config_path.."\n\nLast backend result:\n"..last_result_path) end
 function MailPush:init()
-    ensure_settings(); self.ui.menu:registerToMainMenu(self)
+    ensure_settings()
+    -- A successful update intentionally leaves the old plugin directory as a
+    -- rollback copy until the new plugin has loaded at least once.
+    rm_rf(plugin_dir .. ".previous")
+    self.ui.menu:registerToMainMenu(self)
     local cfg=load_config(); if cfg and cfg.fetch_on_start then UIManager:nextTick(function() self:fetch(true) end) end
 end
 function MailPush:addToMainMenu(menu_items)
