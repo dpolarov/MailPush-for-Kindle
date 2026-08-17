@@ -15,8 +15,8 @@ jobs:
           cache: false
       - run: go test ./...
       - run: go vet ./...
-      - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -o /tmp/mailpush-armv7 ./cmd/mailpush
-      - run: file /tmp/mailpush-armv7 | grep -q 'ARM'
+      - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build -trimpath -o /tmp/mailpush-arm ./cmd/mailpush
+      - run: file /tmp/mailpush-arm | grep -q 'ARM'
 
   docker:
     runs-on: ubuntu-latest
@@ -49,19 +49,30 @@ jobs:
           echo "Embedded version: $actual"
           test "$actual" = "$EXPECTED_VERSION"
 
-      - name: Verify plugin archive
+      - name: Verify install and update archives
         shell: bash
         run: |
           set -euo pipefail
           test -s dist/mailpush.koplugin.zip
+          test -s dist/mailpush.koplugin-update.tar
           unzip -t dist/mailpush.koplugin.zip
           unzip -l dist/mailpush.koplugin.zip | grep -q 'mailpush.koplugin/bin/mailpush'
+          unzip -l dist/mailpush.koplugin.zip | grep -q 'mailpush.koplugin/updater_download.lua'
+          tar -tf dist/mailpush.koplugin-update.tar | grep -qx 'mailpush.koplugin/bin/mailpush'
+          tar -tf dist/mailpush.koplugin-update.tar | grep -qx 'mailpush.koplugin/main.lua'
+          tar -tf dist/mailpush.koplugin-update.tar | grep -qx 'mailpush.koplugin/updater_download.lua'
+          if tar -tf dist/mailpush.koplugin-update.tar | grep -E '(^/|(^|/)\.\.(/|$))'; then
+            echo 'Unsafe path in update tar' >&2
+            exit 1
+          fi
           mv dist/mailpush.koplugin.zip dist/mailpush.koplugin-bilingual.zip
 
       - name: Upload installable plugin
         uses: actions/upload-artifact@v4
         with:
           name: mailpush.koplugin-bilingual-${{ steps.version.outputs.version }}
-          path: dist/mailpush.koplugin-bilingual.zip
+          path: |
+            dist/mailpush.koplugin-bilingual.zip
+            dist/mailpush.koplugin-update.tar
           if-no-files-found: error
           retention-days: 30
