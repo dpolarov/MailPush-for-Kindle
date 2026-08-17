@@ -22,6 +22,7 @@ local UPDATE_SNOOZE_SECONDS = 30 * 24 * 60 * 60
 local UPDATE_MAX_BYTES = 32 * 1024 * 1024
 local UPDATE_MAX_UNPACKED = 64 * 1024 * 1024
 local UPDATE_MAX_FILES = 256
+local UPDATE_ROOT = "mailpush.koplugin/"
 
 local MailPush = WidgetContainer:extend{ name = "mailpush", is_doc_only = false }
 
@@ -134,7 +135,7 @@ function MailPush:validate_update_archive(path)
         if p:sub(1,1) == "/" or p == ".." or p:sub(1,3) == "../" or p:find("/../", 1, true) then
             ok, err = false, "Update archive contains an unsafe path."; break
         end
-        if p ~= "mailpush.koplugin" and p:sub(1,20) ~= "mailpush.koplugin/" then
+        if p ~= "mailpush.koplugin" and p:sub(1, #UPDATE_ROOT) ~= UPDATE_ROOT then
             ok, err = false, "Update archive has an unexpected layout."; break
         end
         if entry.mode ~= "file" and entry.mode ~= "directory" then
@@ -239,8 +240,6 @@ end
 function MailPush:show_paths() self:show("Configuration:\n"..config_path.."\n\nLast backend result:\n"..last_result_path) end
 function MailPush:init()
     ensure_settings()
-    -- A successful update intentionally leaves the old plugin directory as a
-    -- rollback copy until the new plugin has loaded at least once.
     rm_rf(plugin_dir .. ".previous")
     self.ui.menu:registerToMainMenu(self)
     local cfg=load_config(); if cfg and cfg.fetch_on_start then UIManager:nextTick(function() self:fetch(true) end) end
