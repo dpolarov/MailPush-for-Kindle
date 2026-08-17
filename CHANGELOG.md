@@ -13,7 +13,7 @@ The project uses release tags in the form `vMAJOR.MINOR.PATCH`. Dates below use 
 
 ## [v1.1.5] - 2026-08-17
 
-This is the first release with a self-update path successfully exercised on a real Kindle Paperwhite 5 from an older installed release to the new GitHub release.
+This is the first release for which the new self-update path was successfully exercised end-to-end on a real Kindle Paperwhite 5 against a published GitHub Release.
 
 ### Changed
 
