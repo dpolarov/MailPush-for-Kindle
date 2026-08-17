@@ -6,7 +6,11 @@ COPY go.mod ./
 COPY cmd ./cmd
 COPY internal ./internal
 RUN go test ./...
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w -buildid= -X main.version=${VERSION}" -o /out/mailpush ./cmd/mailpush
+# Kindle's older ARM Linux userspace can SIGBUS in Go's ARMv7 bytealg assembly
+# on some code paths (notably ZIP processing used by the updater). Build for
+# GOARM=5 to force the conservative ARM implementation; it remains compatible
+# with PW5's newer ARM CPU while avoiding unaligned-access assumptions.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build -trimpath -ldflags="-s -w -buildid= -X main.version=${VERSION}" -o /out/mailpush ./cmd/mailpush
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -buildid= -X main.version=${VERSION}" -o /out/mailpush-linux-amd64 ./cmd/mailpush
 
 FROM debian:bookworm-slim AS package
