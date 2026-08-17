@@ -6,7 +6,7 @@ vet:
 	go vet ./...
 build-arm:
 	mkdir -p dist
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w" -o dist/mailpush-armv7 ./cmd/mailpush
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build -trimpath -ldflags="-s -w" -o dist/mailpush-arm ./cmd/mailpush
 build-host:
 	mkdir -p dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/mailpush-linux-amd64 ./cmd/mailpush
