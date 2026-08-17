@@ -6,10 +6,31 @@ The project uses release tags in the form `vMAJOR.MINOR.PATCH`. Dates below use 
 
 ## [Unreleased]
 
+## [v1.1.6] - 2026-08-18
+
+Final production release of the updater rework, built from `main` after PR #4 was merged.
+
+### Changed
+
+- Promoted the KOReader-native updater architecture from the validated updater branch into `main`.
+- Production, CI and local ARM builds are aligned on conservative `GOARM=5`.
+- Release workflow is restored to the normal `main`-only release trigger.
+
 ### Documentation
 
-- Reworked the project README to match the current runtime, updater, build and release behavior.
-- Added `AGENTS.md` with architecture, invariants, troubleshooting notes and known technical debt for future maintainers and coding agents.
+- Reworked `README.md` to match the current runtime, updater, build and release behavior.
+- Added `AGENTS.md` with architecture, invariants, troubleshooting notes, known Kindle-specific failures, technical debt and release-testing rules.
+- Added and completed the project changelog for the `v1.1.x` updater work.
+
+### Verified
+
+- PR #4 merged cleanly into `main`.
+- `go test ./...` passes.
+- `go vet ./...` passes.
+- Lua 5.1 syntax checks pass.
+- `GOARM=5` Kindle build passes.
+- Docker production package and updater archive contract checks pass.
+- The same updater architecture was previously exercised successfully end-to-end on a real Kindle Paperwhite 5 using GitHub Release `v1.1.5`.
 
 ## [v1.1.5] - 2026-08-17
 
@@ -119,6 +140,7 @@ Before the `v1.1.x` updater work, the project established the current KOReader/G
 - configurable message, file, archive and timeout limits;
 - bundled CA certificates with optional custom CA support.
 
+[v1.1.6]: https://github.com/dpolarov/MailPush-for-Kindle/releases/tag/v1.1.6
 [v1.1.5]: https://github.com/dpolarov/MailPush-for-Kindle/releases/tag/v1.1.5
 [v1.1.4]: https://github.com/dpolarov/MailPush-for-Kindle/releases/tag/v1.1.4
 [v1.1.3]: https://github.com/dpolarov/MailPush-for-Kindle/releases/tag/v1.1.3
