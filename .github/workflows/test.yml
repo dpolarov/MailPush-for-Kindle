@@ -15,8 +15,8 @@ jobs:
           cache: false
       - run: go test ./...
       - run: go vet ./...
-      - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -o /tmp/mailpush-armv7 ./cmd/mailpush
-      - run: file /tmp/mailpush-armv7 | grep -q 'ARM'
+      - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build -trimpath -o /tmp/mailpush-arm ./cmd/mailpush
+      - run: file /tmp/mailpush-arm | grep -q 'ARM'
 
   docker:
     runs-on: ubuntu-latest
@@ -33,35 +33,25 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "CI build version: $version"
 
-      - name: Build installable plugin archive
+      - name: Build install and update archives
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: sh ./scripts/build.sh
 
-      - name: Verify embedded version
+      - name: End-to-end package verification
         env:
-          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x dist/mailpush-linux-amd64
-          actual="$(./dist/mailpush-linux-amd64 version | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"])')"
-          echo "Embedded version: $actual"
-          test "$actual" = "$EXPECTED_VERSION"
+          VERSION: ${{ steps.version.outputs.version }}
+        run: sh ./scripts/verify-package.sh "$VERSION"
 
-      - name: Verify plugin archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s dist/mailpush.koplugin.zip
-          unzip -t dist/mailpush.koplugin.zip
-          unzip -l dist/mailpush.koplugin.zip | grep -q 'mailpush.koplugin/bin/mailpush'
-          mv dist/mailpush.koplugin.zip dist/mailpush.koplugin-bilingual.zip
+      - name: Rename install archive
+        run: mv dist/mailpush.koplugin.zip dist/mailpush.koplugin-bilingual.zip
 
-      - name: Upload installable plugin
+      - name: Upload tested artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mailpush.koplugin-bilingual-${{ steps.version.outputs.version }}
-          path: dist/mailpush.koplugin-bilingual.zip
+          path: |
+            dist/mailpush.koplugin-bilingual.zip
+            dist/mailpush.koplugin-update.tar
           if-no-files-found: error
           retention-days: 30
