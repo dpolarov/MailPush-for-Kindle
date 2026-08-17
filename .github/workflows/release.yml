@@ -2,13 +2,15 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - VERSION
   workflow_dispatch:
     inputs:
       tag:
         description: "Release tag (for example v1.1.0)"
-        required: true
+        required: false
         type: string
 
 permissions:
@@ -41,24 +43,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
+            TAG="${{ inputs.tag }}"
           else
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="$(tr -d '[:space:]' < VERSION)"
           fi
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release version: $TAG" >&2
+            echo "VERSION must look like v1.1.0" >&2
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release version: $TAG"
 
       - name: Build release archive with Docker
         env:
           VERSION: ${{ steps.release_tag.outputs.tag }}
         run: sh ./scripts/build.sh
 
-      - name: Verify archive
+      - name: Verify embedded version and archive
         shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.release_tag.outputs.tag }}
         run: |
           set -euo pipefail
           test -s dist/mailpush.koplugin.zip
+          test -x dist/mailpush-linux-amd64
+          ACTUAL_VERSION="$(dist/mailpush-linux-amd64 version | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"])')"
+          test "$ACTUAL_VERSION" = "$EXPECTED_VERSION"
           unzip -t dist/mailpush.koplugin.zip
           unzip -l dist/mailpush.koplugin.zip | grep -q 'mailpush.koplugin/bin/mailpush'
+          echo "Verified embedded version: $ACTUAL_VERSION"
 
       - name: Rename release archive
         run: mv dist/mailpush.koplugin.zip dist/mailpush.koplugin-bilingual.zip
@@ -66,23 +83,34 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mailpush-koplugin
+          name: mailpush-koplugin-${{ steps.release_tag.outputs.tag }}
           path: dist/mailpush.koplugin-bilingual.zip
           if-no-files-found: error
 
-      - name: Create GitHub Release and upload ZIP
+      - name: Create tag and GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          if ! git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+
+          if git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            TAG_SHA="$(git rev-list -n 1 "$RELEASE_TAG")"
+            if [[ "$TAG_SHA" != "$GITHUB_SHA" ]]; then
+              echo "Tag $RELEASE_TAG already exists at $TAG_SHA, not $GITHUB_SHA" >&2
+              exit 1
+            fi
+          else
             git tag "$RELEASE_TAG" "$GITHUB_SHA"
             git push origin "$RELEASE_TAG"
           fi
+
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/mailpush.koplugin-bilingual.zip --clobber
           else
-            gh release create "$RELEASE_TAG" dist/mailpush.koplugin-bilingual.zip --title "MailPush for KOReader $RELEASE_TAG" --generate-notes
+            gh release create "$RELEASE_TAG" \
+              dist/mailpush.koplugin-bilingual.zip \
+              --title "MailPush for KOReader $RELEASE_TAG" \
+              --generate-notes
           fi
