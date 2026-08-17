@@ -40,7 +40,7 @@ type Release struct {
 }
 
 type CheckResult struct {
-	Available     bool   `json:"available"`
+	Available      bool   `json:"available"`
 	CurrentVersion string `json:"current_version"`
 	LatestVersion  string `json:"latest_version"`
 	ReleaseURL     string `json:"release_url,omitempty"`
@@ -73,9 +73,21 @@ func client(bundlePath string, timeout time.Duration) (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	tr := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}}
+
+	// Kindle's older 32-bit ARM userspace has shown SIGBUS crashes in Go's
+	// net/http persistent-connection read loop while downloading release assets.
+	// The updater is low-frequency and downloads one small file at a time, so
+	// connection reuse and HTTP/2 provide no meaningful benefit here. Keep this
+	// transport deliberately conservative: one HTTP/1.1 connection per request.
+	tr := &http.Transport{
+		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool},
+		DisableKeepAlives: true,
+		DisableCompression: true,
+		ForceAttemptHTTP2: false,
+		TLSNextProto:      make(map[string]func(string, *tls.Conn) http.RoundTripper),
+	}
 	return &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
 		Transport: tr,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 8 {
@@ -84,6 +96,8 @@ func client(bundlePath string, timeout time.Duration) (*http.Client, error) {
 			if req.URL.Scheme != "https" {
 				return errors.New("update redirect to non-HTTPS URL is blocked")
 			}
+			req.Close = true
+			req.Header.Set("Connection", "close")
 			return nil
 		},
 	}, nil
@@ -141,6 +155,8 @@ func Check(latestURL, currentVersion, assetName, bundlePath string, timeout time
 	if err != nil {
 		return CheckResult{}, err
 	}
+	req.Close = true
+	req.Header.Set("Connection", "close")
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "MailPush-for-Kindle/"+currentVersion)
 	resp, err := c.Do(req)
@@ -184,6 +200,9 @@ func download(url, bundlePath, dst string, maxBytes int64, timeout time.Duration
 	if err != nil {
 		return err
 	}
+	req.Close = true
+	req.Header.Set("Connection", "close")
+	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("User-Agent", "MailPush-for-Kindle updater")
 	resp, err := c.Do(req)
 	if err != nil {
