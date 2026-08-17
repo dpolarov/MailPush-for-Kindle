@@ -1,12 +1,13 @@
 # syntax=docker/dockerfile:1
 FROM golang:1.23-bookworm AS build
 WORKDIR /src
+ARG VERSION=dev
 COPY go.mod ./
 COPY cmd ./cmd
 COPY internal ./internal
 RUN go test ./...
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w -buildid=" -o /out/mailpush ./cmd/mailpush
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -buildid=" -o /out/mailpush-linux-amd64 ./cmd/mailpush
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w -buildid= -X main.version=${VERSION}" -o /out/mailpush ./cmd/mailpush
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -buildid= -X main.version=${VERSION}" -o /out/mailpush-linux-amd64 ./cmd/mailpush
 
 FROM debian:bookworm-slim AS package
 RUN apt-get update && apt-get install -y --no-install-recommends zip ca-certificates && rm -rf /var/lib/apt/lists/*

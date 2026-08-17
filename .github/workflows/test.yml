@@ -22,6 +22,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: sh ./scripts/build.sh
-      - run: test -s dist/mailpush.koplugin.zip
-      - run: unzip -t dist/mailpush.koplugin.zip
+
+      - name: Resolve CI build version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::7}"
+          version="v1.0.0-dev.${short_sha}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "CI build version: $version"
+
+      - name: Build installable plugin archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: sh ./scripts/build.sh
+
+      - name: Verify embedded version
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x dist/mailpush-linux-amd64
+          actual="$(./dist/mailpush-linux-amd64 version | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"])')"
+          echo "Embedded version: $actual"
+          test "$actual" = "$EXPECTED_VERSION"
+
+      - name: Verify plugin archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/mailpush.koplugin.zip
+          unzip -t dist/mailpush.koplugin.zip
+          unzip -l dist/mailpush.koplugin.zip | grep -q 'mailpush.koplugin/bin/mailpush'
+          mv dist/mailpush.koplugin.zip dist/mailpush.koplugin-bilingual.zip
+
+      - name: Upload installable plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: mailpush.koplugin-bilingual-${{ steps.version.outputs.version }}
+          path: dist/mailpush.koplugin-bilingual.zip
+          if-no-files-found: error
+          retention-days: 30
