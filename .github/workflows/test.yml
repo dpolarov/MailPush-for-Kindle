@@ -15,8 +15,25 @@ jobs:
           cache: false
       - run: go test ./...
       - run: go vet ./...
-      - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -o /tmp/mailpush-armv7 ./cmd/mailpush
-      - run: file /tmp/mailpush-armv7 | grep -q 'ARM'
+      - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build -trimpath -o /tmp/mailpush-arm ./cmd/mailpush
+      - run: file /tmp/mailpush-arm | grep -q 'ARM'
+
+  lua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Lua 5.1 compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+      - name: Check plugin Lua syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          LUAC="$(command -v luac5.1 || command -v luac)"
+          "$LUAC" -p mailpush.koplugin/main.lua
+          "$LUAC" -p mailpush.koplugin/updater.lua
+          "$LUAC" -p mailpush.koplugin/updater_download.lua
 
   docker:
     runs-on: ubuntu-latest
@@ -49,13 +66,45 @@ jobs:
           echo "Embedded version: $actual"
           test "$actual" = "$EXPECTED_VERSION"
 
-      - name: Verify plugin archive
+      - name: Verify updater package contract
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
           test -s dist/mailpush.koplugin.zip
           unzip -t dist/mailpush.koplugin.zip
-          unzip -l dist/mailpush.koplugin.zip | grep -q 'mailpush.koplugin/bin/mailpush'
+          test "$(unzip -p dist/mailpush.koplugin.zip mailpush.koplugin/VERSION | tr -d '\r\n')" = "$EXPECTED_VERSION"
+          python3 - <<'PY'
+          import os, pathlib, zipfile
+
+          archive = pathlib.Path("dist/mailpush.koplugin.zip")
+          required = {
+              "mailpush.koplugin/VERSION",
+              "mailpush.koplugin/_meta.lua",
+              "mailpush.koplugin/main.lua",
+              "mailpush.koplugin/updater.lua",
+              "mailpush.koplugin/updater_download.lua",
+              "mailpush.koplugin/config.default.json",
+              "mailpush.koplugin/cacert.pem",
+              "mailpush.koplugin/bin/mailpush",
+          }
+          with zipfile.ZipFile(archive) as zf:
+              infos = zf.infolist()
+              names = {i.filename.rstrip("/") for i in infos}
+              missing = required - names
+              assert not missing, f"missing updater files: {sorted(missing)}"
+              assert len(infos) <= 256, f"too many archive entries: {len(infos)}"
+              total = sum(i.file_size for i in infos)
+              assert total <= 64 * 1024 * 1024, f"unpacked size too large: {total}"
+              for info in infos:
+                  name = info.filename.replace("\\", "/")
+                  assert not name.startswith("/"), f"absolute archive path: {name}"
+                  parts = pathlib.PurePosixPath(name).parts
+                  assert ".." not in parts, f"unsafe archive path: {name}"
+                  assert name == "mailpush.koplugin/" or name.startswith("mailpush.koplugin/"), f"unexpected archive root: {name}"
+          print("Updater archive contract verified")
+          PY
           mv dist/mailpush.koplugin.zip dist/mailpush.koplugin-bilingual.zip
 
       - name: Upload installable plugin

@@ -2,130 +2,267 @@
 
 **English** | [Русский](#русский)
 
-MailPush is a KOReader plugin for Kindle that downloads books and other files directly from an IMAP mailbox. It is intended as a self-hosted, account-independent alternative to Amazon **Send to Kindle** for jailbroken Kindles running KOReader.
+MailPush is a KOReader plugin for jailbroken Kindle devices that downloads books and other files from an ordinary IMAP mailbox. It is designed as a small, account-independent alternative to Amazon **Send to Kindle**: send an attachment or an HTTP(S) link to your mailbox, then fetch it from KOReader.
 
-The plugin has a native KOReader UI and a small statically linked Go backend. **KUAL and Python are not required.** Mail is checked only when you request it, or once at KOReader startup if that option is enabled; there is no background polling.
+The UI is native KOReader Lua. Mail processing is handled by a small statically linked Go backend. **KUAL and Python are not required.**
 
-> **Origin / credits**
->
-> This project was inspired by and based on the idea and behavior of **Le-Maxime/MailPushRU**: https://github.com/Le-Maxime/MailPushRU
->
-> MailPushRU itself is a Russian-language fork of **guo-yong-zhi/MailPush**. This KOReader version is a new Go/Lua implementation rather than a direct Python port. Many thanks to the original authors for the idea of receiving files on Kindle through an ordinary IMAP mailbox.
+> The project is inspired by [Le-Maxime/MailPushRU](https://github.com/Le-Maxime/MailPushRU), which in turn is based on [guo-yong-zhi/MailPush](https://github.com/guo-yong-zhi/MailPush). This repository is a new Go + Lua implementation rather than a direct Python port.
+
+## Status
+
+Primary real-device target: **Kindle Paperwhite 5 / 11th generation (PW5)** with jailbreak and KOReader.
+
+Verified on a real PW5:
+
+- KOReader plugin loading and Network-menu integration;
+- IMAP TLS connection/authentication;
+- downloading real book attachments;
+- UID/processed-message behavior;
+- GitHub release update detection;
+- complete self-update to `v1.1.5`, including download, staged verification, installation and KOReader restart.
+
+Other Kindle models may work, but they are not claimed as equally tested.
+
+The production Kindle backend is deliberately conservative:
+
+```text
+CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5
+```
+
+`GOARM=5` is intentional. Earlier updater experiments exposed a Kindle/PW5 `SIGBUS`; do not assume a more aggressive ARM target is safe merely because it compiles.
 
 ## Features
 
-- Download one or multiple email attachments in a single run.
-- Download files from `http://` and `https://` links in the subject or text body.
-- Optional automatic archive extraction: ZIP, TAR, TAR.GZ/TGZ and TAR.BZ2/TBZ2.
-- `save to`, legacy `saveto`, and `сохранить в` directives for destination paths/names.
-- Manual **Fetch mail now** and **Test connection** commands.
-- Optional **Fetch once when KOReader starts**; no periodic/background polling.
-- IMAP over TLS without OAuth. Provider app passwords can be used where required.
-- Bundled public CA certificates plus support for an additional custom CA file.
-- Multiple books are processed independently; MailPush reports results and does not automatically open a downloaded book.
-- Persistent processed-message history prevents duplicate downloads.
+- Download one or multiple attachments from one or multiple messages.
+- Download files referenced by `http://` or `https://` links in the subject/plain-text body.
+- Optional automatic extraction of ZIP, TAR, TAR.GZ/TGZ and TAR.BZ2/TBZ2.
+- Destination directives:
+  - `save to`
+  - legacy `saveto`
+  - `сохранить в`
+- Manual **Fetch mail now**.
+- Manual **Test connection**.
+- Optional one-time **Fetch once when KOReader starts**.
+- No daemon and no periodic background mailbox polling.
+- IMAP over TLS without OAuth; provider app passwords work where required.
+- Bundled public CA certificates plus optional custom/private CA.
+- Persistent UID/UIDVALIDITY state prevents duplicate downloads.
+- Configurable message/file/archive limits and timeouts.
+- Root filesystem sandbox for all message-requested output paths.
+- Safe archive extraction that rejects traversal and links.
+- Built-in GitHub Release update check and self-update.
+- 30-day update reminder snooze after choosing **Not now**.
+- Staged update verification and retained previous-plugin backup.
 
-## Why this version differs from MailPushRU
+## How it is built
 
-The original MailPushRU is a KUAL/Python solution. This version integrates directly into KOReader and moves the backend to Go:
-
-- KOReader `.koplugin` UI instead of KUAL.
-- Single static ARMv7 Go binary; no Python runtime on Kindle.
-- IMAP **UID** and `UIDVALIDITY` instead of unstable sequence numbers.
-- `BODY.PEEK[]` fetches messages without implicitly marking them read.
-- `\\Seen` is a separate, configurable step after successful processing.
-- Only HTTP(S) URLs are accepted; `file://`, `ftp://` and redirects to unsafe schemes are rejected.
-- Config accepts UTF-8 BOM for compatibility but is atomically written as UTF-8 without BOM.
-- Root sandbox and checks against `../`, absolute escapes and existing symlink traversal.
-- Safe archive extraction rejects ZIP/TAR traversal, symlinks and hardlinks.
-- Limits for message/download/archive sizes, file count and network timeouts.
-
-## Compatibility
-
-Primary target and tested hardware:
-
-- **Tested on a real Kindle Paperwhite 5 (11th generation / PW5)** — plugin loading, KOReader Network menu integration, IMAP connection and successful book download were verified on-device.
-- jailbroken Kindle
-- KOReader
-- ARMv7 Linux userspace
-
-The Kindle backend is built with:
+MailPush is intentionally split into two runtime parts:
 
 ```text
-GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0
+KOReader / Lua
+  main.lua
+    - menu and settings
+    - backend invocation
+    - result/error UI
+    - update UX
+       |
+       +--> updater.lua
+            - KOReader NetworkMgr
+            - LuaSocket/socketutil
+            - GitHub Releases API
+            - ffi/archiver
+            - staged update validation/install
+
+Go backend
+  bin/mailpush
+    - IMAP
+    - MIME parsing
+    - attachment processing
+    - mail-referenced HTTP(S) downloads
+    - filesystem sandbox
+    - normal archive extraction
+    - UID state
 ```
 
-Other ARMv7 Kindle models running KOReader may work, but PW5 / 11th generation is the primary target.
+Self-update networking is intentionally in KOReader Lua rather than the Go HTTP updater path because the latter caused real-device compatibility problems during earlier attempts.
 
 ## Installation
 
-1. Build the project (see [Building](#building)), or use a prebuilt `mailpush.koplugin.zip` release.
-2. Connect the Kindle by USB/SFTP.
-3. Extract/copy the plugin so the directory is exactly:
+Download the release asset:
 
-   ```text
-   /mnt/us/koreader/plugins/mailpush.koplugin/
-   ```
+```text
+mailpush.koplugin-bilingual.zip
+```
 
-   The layout must look like:
+Extract it so the plugin directory is exactly:
 
-   ```text
-   mailpush.koplugin/
-   ├── _meta.lua
-   ├── main.lua
-   ├── config.default.json
-   ├── cacert.pem
-   └── bin/
-       └── mailpush
-   ```
+```text
+/mnt/us/koreader/plugins/mailpush.koplugin/
+```
 
-4. If necessary, restore the executable bit:
+Expected installed layout:
 
-   ```sh
-   chmod 755 /mnt/us/koreader/plugins/mailpush.koplugin/bin/mailpush
-   ```
+```text
+mailpush.koplugin/
+├── VERSION
+├── _meta.lua
+├── main.lua
+├── updater.lua
+├── updater_download.lua
+├── config.default.json
+├── cacert.pem
+└── bin/
+    └── mailpush
+```
 
-5. Fully restart KOReader.
-6. Open **Settings → Network → MailPush**.
-7. Enter the IMAP settings and select **Test connection**.
-8. Send a book to the configured mailbox and select **Fetch mail now**.
+If the executable bit was lost while copying manually:
+
+```sh
+chmod 755 /mnt/us/koreader/plugins/mailpush.koplugin/bin/mailpush
+```
+
+Then fully restart KOReader and open:
+
+```text
+Settings -> Network -> MailPush
+```
+
+Configure IMAP and run **Test connection** before fetching mail.
+
+A separate Russian installation guide is also available in [`INSTALL_RU.md`](INSTALL_RU.md).
+
+## Updating
+
+Use:
+
+```text
+Settings -> Network -> MailPush -> Check for updates
+```
+
+MailPush reads GitHub `releases/latest` and looks for the exact release asset:
+
+```text
+mailpush.koplugin-bilingual.zip
+```
+
+If a newer version is available, the user can install it immediately or choose **Not now**. Declining suppresses automatic reminders for 30 days; a manual forced check is still possible.
+
+### What the updater validates
+
+The current updater does **not** overwrite the running plugin directly. It:
+
+1. waits for network availability through KOReader;
+2. downloads the ZIP into a staging area;
+3. checks compressed size;
+4. opens the ZIP with KOReader `ffi/archiver`;
+5. verifies archive root, entry paths/types, entry count and expanded-size limits;
+6. extracts to a staged plugin directory;
+7. verifies required files;
+8. checks that packaged `VERSION` matches the GitHub release version;
+9. runs the staged ARM backend with `version` and checks its embedded version;
+10. only then renames the current plugin to `mailpush.koplugin.previous` and activates the staged plugin;
+11. asks to restart KOReader.
+
+Updater hard limits are intentionally smaller than normal book/archive limits:
+
+```text
+release ZIP:       <= 32 MiB
+expanded update:   <= 64 MiB
+archive entries:   <= 256
+```
+
+The previous plugin is retained as:
+
+```text
+/mnt/us/koreader/plugins/mailpush.koplugin.previous
+```
+
+There is currently no one-click rollback menu; the backup is primarily for manual recovery.
 
 ## Configuration
 
-Configuration is available from **Settings → Network → MailPush**.
+Persistent configuration is stored outside the plugin directory under KOReader's settings directory:
 
-Typical settings are:
+```text
+<KOReader settings>/mailpush/config.json
+```
 
-- IMAP host and port (normally TLS port `993`);
-- username/email address;
-- password or provider-specific app password;
-- mailbox (`INBOX` by default);
-- root/download directory;
-- age/message limits;
-- whether successfully processed messages should be marked read;
-- whether to fetch once at KOReader startup;
-- optional custom CA file.
+Processed-message state is stored separately:
 
-The persistent config is kept under KOReader's settings directory in `mailpush/config.json` with mode `0600`, so replacing the plugin during an update does not normally erase the account settings.
+```text
+<KOReader settings>/mailpush/state.json
+```
+
+Update snooze state and the last backend response are stored as:
+
+```text
+<KOReader settings>/mailpush/update_state.json
+<KOReader settings>/mailpush/last_result.json
+```
+
+This separation means normal plugin replacement does not erase account settings or processed-message history.
+
+Default configuration:
+
+```json
+{
+  "host": "",
+  "port": 993,
+  "user": "",
+  "password": "",
+  "mailbox": "INBOX",
+  "tls": true,
+  "ca_file": "",
+  "download_dir": "/mnt/us/documents/downloads",
+  "root": "/mnt/us",
+  "max_age_days": 7,
+  "max_messages": 20,
+  "fetch_unread_only": true,
+  "mark_seen": true,
+  "fetch_on_start": false,
+  "auto_unpack": true,
+  "max_file_bytes": 104857600,
+  "max_message_bytes": 157286400,
+  "max_archive_bytes": 314572800,
+  "max_archive_files": 500,
+  "connect_timeout_seconds": 15,
+  "io_timeout_seconds": 45,
+  "http_timeout_seconds": 60
+}
+```
+
+Most user-facing fields are editable from the MailPush menu.
 
 ### Authentication
 
-OAuth is intentionally not implemented. MailPush uses ordinary IMAP authentication. Some providers require an **app password** instead of the normal account password.
+OAuth is intentionally not implemented. MailPush uses ordinary IMAP authentication. Providers that disallow the account password may require an **app password**.
 
-TLS certificate verification is enabled. Public services can use the CA bundle shipped with the plugin; a private/self-hosted IMAP server can additionally specify its own CA certificate.
+The IMAP password must be stored on the Kindle because this target environment does not provide a portable secure keyring for the plugin. MailPush keeps its settings directory restricted and writes the config with mode `0600`; normal result/error output does not expose the password.
 
-## Sending books
+### TLS
+
+Certificate verification is enabled.
+
+- Public providers can use the CA bundle shipped with the plugin.
+- Private/self-hosted servers can specify an additional CA certificate through `ca_file`.
+- Incorrect Kindle date/time can also cause certificate validation failures.
+
+## Sending books and files
 
 The simplest message contains one or more attachments. No special subject is required.
 
-You can also put HTTP(S) download links in the subject or plain-text body:
+HTTP(S) links may also be placed in the subject or plain-text body:
 
 ```text
 https://example.org/book.epub
 https://example.org/another-book.pdf
 ```
 
-To choose the destination name/path, use:
+Only HTTP(S) is accepted. Schemes such as `file://` and `ftp://` are rejected, and redirect handling may not escape to an unsafe scheme.
+
+### Destination directives
+
+Examples:
 
 ```text
 save to books/book.epub
@@ -135,59 +272,66 @@ saveto books/book.epub
 сохранить в books/book.epub
 ```
 
-A directory target such as `save to books/` applies to multiple files while preserving their original filenames.
+A trailing `/` means a directory target. Multiple files keep their original filenames inside that directory.
 
-All destination paths are constrained by the configured `root` (default `/mnt/us`). Attempts to escape it are rejected.
+All output paths are constrained by configured `root` (default `/mnt/us`). Attempts to escape through `../`, absolute paths or unsafe symlink traversal are rejected.
 
-## How message processing works
+## IMAP processing semantics
 
-1. MailPush connects to the configured mailbox over TLS.
-2. It performs `UID SEARCH` using the configured filters.
-3. UIDs already recorded for the current `UIDVALIDITY` are skipped.
-4. Each selected message is retrieved with `UID FETCH <uid> (BODY.PEEK[])`.
-5. Attachments and allowed HTTP(S) links are processed independently.
-6. After complete success, the UID is added to local processed history.
-7. If enabled, MailPush separately runs `UID STORE <uid> +FLAGS.SILENT (\\Seen)`.
+MailPush deliberately uses IMAP UIDs rather than sequence numbers.
 
-If `UIDVALIDITY` changes, the old processed-UID history is discarded because those UIDs no longer identify the same mailbox state.
+Normal fetch flow:
+
+1. connect over TLS;
+2. authenticate and select the configured mailbox;
+3. read server `UIDVALIDITY`;
+4. run `UID SEARCH` using age/unread filters;
+5. skip UIDs already processed for the current `UIDVALIDITY`;
+6. fetch selected mail with `UID FETCH ... BODY.PEEK[]`;
+7. parse MIME content;
+8. process attachments and allowed URLs;
+9. record the UID only after complete success;
+10. if enabled, separately mark it read with `UID STORE ... +FLAGS.SILENT (\\Seen)`.
+
+`BODY.PEEK[]` matters: downloading a message must not implicitly mark it read before processing succeeds.
+
+If `UIDVALIDITY` changes, the old stored UID set is discarded because those UIDs no longer identify the same mailbox state.
 
 ## Archive support and safety
 
-Automatic extraction supports:
+Normal downloaded content can be automatically extracted when `auto_unpack` is enabled.
+
+Supported formats:
 
 - `.zip`
 - `.tar`
 - `.tar.gz` / `.tgz`
 - `.tar.bz2` / `.tbz2`
 
-Mail received from the Internet is untrusted input. MailPush therefore:
+Incoming mail and downloaded files are untrusted. The backend therefore rejects:
 
-- never executes downloaded files;
-- accepts only HTTP(S) remote URLs;
-- rejects filesystem/path traversal;
-- rejects symlinks and hardlinks in archives;
-- limits message and download sizes;
-- limits total extracted bytes and number of archive entries;
-- uses network timeouts;
-- keeps writes inside the configured root.
+- traversal outside the destination;
+- symlinks in archives;
+- hardlinks in archives;
+- excessive expanded bytes;
+- excessive archive entry counts.
 
-The password must be stored on the Kindle because there is no general-purpose secure keyring available to this plugin. The config is restricted to mode `0600`, and the password is not included in normal result/error output.
+It also applies file/message/network limits before or during processing.
 
 ## Building
 
-### Docker
+Go version:
 
-Docker is the recommended build method:
-
-```sh
-./scripts/build.sh
+```text
+go 1.23
 ```
 
-or:
+The project currently uses only the Go standard library, so no `go.sum` is expected.
+
+### Recommended Docker build
 
 ```sh
-mkdir -p dist
-docker compose run --rm build
+sh ./scripts/build.sh
 ```
 
 Artifacts:
@@ -197,218 +341,292 @@ dist/mailpush.koplugin.zip
 dist/mailpush-linux-amd64
 ```
 
-The Docker build cross-compiles the static ARMv7 Kindle backend and packages the KOReader plugin.
+The Docker build:
+
+- runs Go tests;
+- cross-compiles a static Kindle ARM binary with `GOARM=5`;
+- builds an amd64 host binary used by CI version checks;
+- adds the CA bundle;
+- writes packaged `mailpush.koplugin/VERSION`;
+- creates the installable plugin ZIP.
+
+### Make targets
+
+```sh
+make test
+make vet
+make build-arm
+make build-host
+make docker
+make clean
+```
+
+`make build-arm` uses the same conservative `GOARM=5` target as the production Docker build.
 
 ## Tests
 
-Run locally with Go:
+Minimum Go checks:
 
 ```sh
 go test ./...
 go vet ./...
+```
+
+Additional host race testing:
+
+```sh
 go test -race ./...
 ```
 
-The test suite covers, among other things:
+Lua must remain compatible with Lua 5.1:
 
-- UTF-8 BOM input and BOM-free config output;
+```sh
+luac5.1 -p mailpush.koplugin/main.lua
+luac5.1 -p mailpush.koplugin/updater.lua
+luac5.1 -p mailpush.koplugin/updater_download.lua
+```
+
+The test/CI suite covers or validates, among other things:
+
+- UTF-8 BOM config input and BOM-free output;
 - UID/UIDVALIDITY state handling;
-- `BODY.PEEK[]` and separate `\\Seen` handling;
-- RFC2047/RFC2231 MIME names;
+- `BODY.PEEK[]` and separate `\\Seen` behavior;
+- MIME/RFC2047/RFC2231 filenames;
 - multiple attachments and `save to` variants;
-- rejection of `file://` and `ftp://`;
-- HTTP limits and unsafe redirects;
+- unsafe URL schemes and redirects;
 - filesystem and symlink traversal;
-- ZIP-slip/archive limits;
-- TLS with an additional CA certificate.
+- ZIP/archive limits;
+- TLS with an additional CA certificate;
+- conservative ARM build;
+- Lua 5.1 syntax;
+- release ZIP structure and updater required files;
+- packaged and embedded version agreement.
+
+## GitHub Actions
+
+### Test workflow
+
+`.github/workflows/test.yml` runs separate Go, Lua and Docker/package checks.
+
+A green Go job alone is not sufficient for update changes: release packaging has previously been the source of real-device update failures.
+
+### Release workflow
+
+Production release asset name is fixed:
+
+```text
+mailpush.koplugin-bilingual.zip
+```
+
+The intended normal release flow is:
+
+1. change root `VERSION` to a valid `vX.Y.Z`;
+2. run/verify tests;
+3. push/merge the version change to `main`;
+4. the Release workflow builds and validates the package;
+5. it creates the version tag if needed;
+6. it creates/updates the GitHub Release;
+7. it uploads `mailpush.koplugin-bilingual.zip`.
+
+The workflow can also be started manually from **Actions -> Release -> Run workflow** with a tag input.
+
+Published tags are immutable release history. If a tag already exists at a different commit, do not force-move it simply to satisfy CI.
+
+## Troubleshooting
+
+### Authentication failed
+
+- verify username/password;
+- check whether the provider requires an app password;
+- verify IMAP access is enabled for the account.
+
+### Certificate / x509 error
+
+- check Kindle date/time;
+- verify `ca_file` if using a private CA;
+- verify the IMAP server certificate chain.
+
+### Connection refused / timeout
+
+- verify Wi-Fi is actually online;
+- check host/port;
+- verify the network/provider permits IMAP.
+
+### Outside configured root / symbolic link
+
+The requested `save to` destination violates the configured filesystem sandbox. Keep destinations under `root`.
+
+### Size/archive limit
+
+The message, file or expanded archive exceeded the configured safety limits.
+
+### Update archive error
+
+Inspect the **actual latest GitHub Release asset**, not only a source-tree ZIP or CI artifact. The updater expects a single `mailpush.koplugin/` root and all required files listed in the installation section.
+
+## Development notes
+
+Detailed architecture, invariants, updater failure history, release rules and known technical debt are documented in [`AGENTS.md`](AGENTS.md).
+
+Release history is in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Credits and license
+
+MailPush for KOReader is inspired by the original MailPush/MailPushRU projects noted above.
+
+See [`LICENSE`](LICENSE) for this repository's license.
 
 ---
 
 # Русский
 
-**MailPush for KOReader** — плагин для Kindle, который загружает книги и другие файлы напрямую из обычного почтового ящика по IMAP. По сути, это независимая замена **Amazon Send to Kindle** для Kindle с jailbreak и KOReader: отправляете книгу на выбранный почтовый ящик и забираете её через MailPush.
+**MailPush for KOReader** — плагин для Kindle с jailbreak и KOReader, который скачивает книги и другие файлы из обычного IMAP-почтового ящика. Это независимая альтернатива Amazon **Send to Kindle**: отправляете вложение или HTTP(S)-ссылку на почту и забираете файл через меню KOReader.
 
-Плагин встроен в интерфейс KOReader, а с почтой работает небольшой статически собранный Go-бинарник. **KUAL и Python не нужны.** Почта проверяется только по команде пользователя либо один раз при запуске KOReader, если это включено в настройках. Фонового периодического опроса нет.
+Интерфейс написан на Lua и работает внутри KOReader. IMAP, MIME, скачивание файлов из писем, безопасные пути и распаковка реализованы небольшим статическим Go-бинарником. **Python и KUAL не нужны.**
 
-> **Откуда взята идея / благодарности**
->
-> Идея и исходное поведение проекта взяты из репозитория **Le-Maxime/MailPushRU**: https://github.com/Le-Maxime/MailPushRU
->
-> Сам MailPushRU является русскоязычным форком **guo-yong-zhi/MailPush**. Эта версия для KOReader — новая реализация на Go + Lua, а не прямой перенос Python-кода. Спасибо авторам исходных проектов за идею доставки файлов на Kindle через обычный IMAP-ящик.
+## Проверенный статус
 
-## Возможности
+Основная тестовая платформа — **Kindle Paperwhite 5 / 11-е поколение (PW5)**.
 
-- Загрузка одного или нескольких вложений из одного или нескольких писем.
-- Загрузка файлов по `http://` и `https://` ссылкам из темы или текста письма.
-- Автоматическая распаковка ZIP, TAR, TAR.GZ/TGZ и TAR.BZ2/TBZ2.
-- Управление именем и каталогом через `save to`, старый `saveto` или `сохранить в`.
-- **Fetch mail now** — проверить почту вручную.
-- **Test connection** — проверить IMAP-настройки без загрузки книг.
-- Опциональный однократный **Fetch on KOReader start**.
-- Никакого фонового polling.
-- IMAP over TLS без OAuth; при необходимости используются пароли приложений почтового сервиса.
-- Встроенный набор публичных CA-сертификатов и возможность добавить собственный CA.
-- Корректная обработка нескольких книг: они скачиваются независимо, автоматически открывать одну из них MailPush не пытается.
-- История UID защищает от повторного скачивания уже обработанных писем.
+На реальном PW5 проверены:
 
-## Чем отличается от MailPushRU
+- загрузка плагина и меню KOReader;
+- IMAP TLS и авторизация;
+- реальное скачивание книги;
+- история UID;
+- поиск новой версии через GitHub Release;
+- полноценное самообновление до `v1.1.5` с проверкой пакета, установкой и перезапуском KOReader.
 
-MailPushRU работает через KUAL и Python. Эта версия переработана специально для KOReader:
-
-- интерфейс нативного `.koplugin` вместо KUAL;
-- один статический ARMv7 Go-бинарник, Python на Kindle не требуется;
-- IMAP **UID + UIDVALIDITY** вместо порядковых номеров писем;
-- чтение через **`BODY.PEEK[]`**, поэтому само получение письма не выставляет `Seen`;
-- пометка `\\Seen` выполняется отдельной управляемой командой только после успешной обработки;
-- разрешены только HTTP(S)-ссылки; `file://`, `ftp://` и небезопасные redirect запрещены;
-- чтение конфига с UTF-8 BOM поддерживается, запись всегда UTF-8 без BOM и атомарная;
-- защита от `../`, выхода за `root`, существующих symlink и небезопасной распаковки;
-- лимиты размеров, количества файлов и таймауты.
-
-## Совместимость
-
-Основная цель проекта:
-
-- **Протестировано на реальном Kindle Paperwhite 5 (11-е поколение / PW5)** — проверены загрузка плагина, интеграция в меню Network, IMAP-подключение и успешное скачивание книги;
-- jailbreak;
-- установленный KOReader;
-- ARMv7 Linux userspace.
-
-Kindle-бинарник собирается как:
+Kindle-бинарник собирается специально консервативно:
 
 ```text
-GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0
+CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5
 ```
 
-На других ARMv7 Kindle с KOReader плагин также может работать, но основная проверяемая платформа — PW5 / 11th gen.
+`GOARM=5` выбран намеренно после реальной проблемы `SIGBUS` на PW5 во время ранних попыток обновления.
 
 ## Установка
 
-1. Соберите проект через Docker или возьмите готовый `mailpush.koplugin.zip` из release.
-2. Подключите Kindle по USB/SFTP.
-3. Распакуйте плагин точно в:
+Возьмите из GitHub Release файл:
 
-   ```text
-   /mnt/us/koreader/plugins/mailpush.koplugin/
-   ```
+```text
+mailpush.koplugin-bilingual.zip
+```
 
-4. Проверьте структуру:
+Распакуйте в:
 
-   ```text
-   mailpush.koplugin/
-   ├── _meta.lua
-   ├── main.lua
-   ├── config.default.json
-   ├── cacert.pem
-   └── bin/
-       └── mailpush
-   ```
+```text
+/mnt/us/koreader/plugins/mailpush.koplugin/
+```
 
-5. Если при копировании потерялся executable bit:
+В каталоге должны быть как минимум:
 
-   ```sh
-   chmod 755 /mnt/us/koreader/plugins/mailpush.koplugin/bin/mailpush
-   ```
+```text
+VERSION
+_meta.lua
+main.lua
+updater.lua
+updater_download.lua
+config.default.json
+cacert.pem
+bin/mailpush
+```
 
-6. Полностью перезапустите KOReader.
-7. Откройте **Settings → Network → MailPush**.
-8. Заполните IMAP-настройки и нажмите **Test connection**.
-9. Отправьте письмо с книгой и выберите **Fetch mail now**.
+После установки полностью перезапустите KOReader и откройте:
 
-## Настройка
+```text
+Settings -> Network -> MailPush
+```
 
-Все основные параметры доступны в **Settings → Network → MailPush**:
+Заполните IMAP-настройки и сначала выполните **Test connection**.
 
-- IMAP host и port (обычно TLS `993`);
-- email/username;
-- пароль или пароль приложения;
-- mailbox (`INBOX` по умолчанию);
-- корневой каталог и каталог загрузки;
-- максимальный возраст/количество писем;
-- помечать ли успешно обработанное письмо прочитанным;
-- проверять ли почту один раз при запуске KOReader;
-- дополнительный пользовательский CA-файл.
+Подробная русская инструкция также находится в [`INSTALL_RU.md`](INSTALL_RU.md).
 
-Постоянный конфиг хранится отдельно от каталога плагина в настройках KOReader: `mailpush/config.json`, права `0600`. Поэтому обновление папки плагина обычно не удаляет настройки почты.
+## Основные возможности
 
-### Авторизация
+- одно или несколько вложений;
+- HTTP(S)-ссылки из темы/текста письма;
+- ZIP/TAR/TAR.GZ/TAR.BZ2;
+- `save to`, `saveto`, `сохранить в`;
+- ручной Fetch;
+- тест IMAP-подключения;
+- однократный Fetch при старте KOReader;
+- без фонового polling;
+- UID + UIDVALIDITY вместо нестабильных порядковых номеров;
+- `BODY.PEEK[]` без автоматического выставления Seen;
+- опциональный отдельный `\\Seen` только после успешной обработки;
+- root sandbox;
+- ограничения размеров/таймаутов;
+- встроенная проверка и установка новых GitHub Releases.
 
-OAuth намеренно не используется. MailPush работает с обычным IMAP. Если почтовый сервис запрещает вход с основным паролем, создайте **app password / пароль приложения**.
+## Самообновление
 
-Проверка TLS-сертификатов включена. Для публичных почтовых сервисов используется CA bundle, поставляемый вместе с плагином; для собственного IMAP-сервера можно дополнительно указать свой CA.
+Меню:
+
+```text
+Settings -> Network -> MailPush -> Check for updates
+```
+
+Обновление скачивается средствами KOReader, сначала полностью распаковывается и проверяется во временный staging-каталог и только после этого заменяет рабочий плагин.
+
+Проверяется:
+
+- корректный корень ZIP;
+- отсутствие unsafe/path traversal;
+- типы и количество записей;
+- размер после распаковки;
+- обязательные файлы;
+- совпадение `VERSION` с GitHub Release;
+- версия нового ARM backend до его активации.
+
+Предыдущая версия сохраняется как:
+
+```text
+/mnt/us/koreader/plugins/mailpush.koplugin.previous
+```
+
+Если пользователь отказывается от предлагаемого обновления, автоматическое напоминание откладывается на 30 дней. Ручная проверка остаётся доступной.
+
+## Где хранятся настройки
+
+Настройки находятся **вне** каталога плагина:
+
+```text
+<KOReader settings>/mailpush/config.json
+<KOReader settings>/mailpush/state.json
+<KOReader settings>/mailpush/update_state.json
+<KOReader settings>/mailpush/last_result.json
+```
+
+Поэтому обычное обновление плагина не должно удалять логин/пароль и историю обработанных писем.
+
+Пароль хранится локально в `config.json` с ограниченными правами (`0600`), так как универсального secure keyring для целевого Kindle-окружения нет.
 
 ## Как отправить книгу
 
-Самый простой вариант — отправить письмо с одним или несколькими файлами во вложении. Тема может быть любой или пустой.
-
-Можно отправить HTTP(S)-ссылки в теме или обычном текстовом теле письма:
+Просто отправьте вложение на настроенный ящик или добавьте ссылку:
 
 ```text
 https://example.org/book.epub
-https://example.org/another-book.pdf
 ```
 
-Для выбора имени/пути:
+Можно задать путь:
 
 ```text
 save to books/book.epub
-save to books/one.epub|books/two.pdf
 save to books/
 saveto books/book.epub
 сохранить в books/book.epub
 ```
 
-`save to books/` означает каталог: если файлов несколько, все они попадут туда под исходными именами.
+Все пути должны оставаться внутри настроенного `root`, по умолчанию `/mnt/us`.
 
-Все пути ограничены настроенным `root` (по умолчанию `/mnt/us`). Выйти через `../` или другим способом за пределы `root` нельзя.
+## Сборка
 
-## Как обрабатывается почта
-
-1. MailPush устанавливает TLS-соединение с IMAP.
-2. Выполняет `UID SEARCH` с выбранными фильтрами.
-3. Уже обработанные UID для текущего `UIDVALIDITY` пропускаются.
-4. Письмо читается командой `UID FETCH <uid> (BODY.PEEK[])`.
-5. Вложения и допустимые HTTP(S)-ссылки обрабатываются независимо.
-6. После полного успеха UID сохраняется в локальной истории.
-7. Если включена соответствующая настройка, отдельно выполняется `UID STORE <uid> +FLAGS.SILENT (\\Seen)`.
-
-При изменении `UIDVALIDITY` старая история UID автоматически сбрасывается.
-
-## Архивы и безопасность
-
-Поддерживается автоматическая распаковка:
-
-- `.zip`
-- `.tar`
-- `.tar.gz` / `.tgz`
-- `.tar.bz2` / `.tbz2`
-
-Письмо считается недоверенным внешним вводом, поэтому MailPush:
-
-- никогда не запускает скачанные файлы;
-- принимает удалённые ссылки только HTTP(S);
-- блокирует path traversal;
-- блокирует symlink/hardlink в архивах;
-- ограничивает размер писем и загрузок;
-- ограничивает суммарный размер распаковки и количество файлов;
-- использует сетевые таймауты;
-- не позволяет писать за пределами настроенного `root`.
-
-Пароль необходимо хранить на Kindle, поскольку у плагина нет универсального системного secure keyring. Файл конфигурации имеет права `0600`, а пароль не выводится в обычных результатах и сообщениях об ошибках.
-
-## Сборка Docker
-
-Рекомендуемый вариант:
+Рекомендуемый production-вариант:
 
 ```sh
-./scripts/build.sh
-```
-
-или:
-
-```sh
-mkdir -p dist
-docker compose run --rm build
+sh ./scripts/build.sh
 ```
 
 Результат:
@@ -418,7 +636,17 @@ dist/mailpush.koplugin.zip
 dist/mailpush-linux-amd64
 ```
 
-## Тесты
+Локально:
+
+```sh
+make test
+make vet
+make build-arm
+make build-host
+make docker
+```
+
+## Проверки
 
 ```sh
 go test ./...
@@ -426,62 +654,21 @@ go vet ./...
 go test -race ./...
 ```
 
-Тестами проверяются в том числе BOM, UID/UIDVALIDITY, `BODY.PEEK[]`, отдельный `\\Seen`, MIME/RFC2047/RFC2231, несколько вложений, `save to`, запрет `file://`/`ftp://`, HTTP redirect/size limits, traversal/symlink, ZIP-slip, ограничения архивов и TLS с дополнительным CA.
+Lua должен оставаться совместимым с Lua 5.1.
 
-## GitHub releases
+GitHub Actions дополнительно проверяет production ZIP: обязательные updater-файлы, безопасные пути, размеры, ARM-сборку и совпадение версии внутри пакета.
 
-The repository includes `.github/workflows/release.yml`. A release is built only after `go test ./...` and `go vet ./...` succeed. The workflow builds the Kindle package with the project's Docker build, verifies the ZIP, and publishes this exact release asset:
+## Релизы
 
-```text
-mailpush.koplugin-bilingual.zip
-```
+Обычный процесс:
 
-Recommended release flow:
+1. изменить `VERSION` на `vX.Y.Z`;
+2. проверить тесты;
+3. отправить изменение в `main`;
+4. Release workflow соберёт и проверит ZIP;
+5. создаст тег/релиз;
+6. загрузит `mailpush.koplugin-bilingual.zip`.
 
-```sh
-git tag v1.0.0
-git push origin v1.0.0
-```
+История изменений: [`CHANGELOG.md`](CHANGELOG.md).
 
-Pushing a `v*` tag automatically creates the GitHub Release and attaches the ZIP. The workflow can also be started manually from **Actions → Release → Run workflow**, where you provide a tag such as `v1.0.0`.
-
-The workflow uses the repository's built-in `GITHUB_TOKEN`; no personal access token or release secret is required for a normal GitHub repository. The workflow therefore requests `contents: write` permission.
-
----
-
-## Публикация релизов в GitHub
-
-В проект добавлен `.github/workflows/release.yml`. Релиз собирается только после успешных `go test ./...` и `go vet ./...`. Затем GitHub Actions собирает пакет через Docker, проверяет ZIP и прикрепляет к GitHub Release файл с фиксированным именем:
-
-```text
-mailpush.koplugin-bilingual.zip
-```
-
-Рекомендуемый способ выпуска версии:
-
-```sh
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-Push тега `v*` автоматически создаст GitHub Release и приложит ZIP. Также workflow можно запустить вручную через **Actions → Release → Run workflow**, указав тег, например `v1.0.0`.
-
-Используется встроенный `GITHUB_TOKEN` репозитория, поэтому отдельный Personal Access Token или secret для обычной публикации релиза не требуется. Workflow запрашивает разрешение `contents: write`.
-
----
-
-## GitHub Actions release troubleshooting
-
-The release workflow intentionally runs `scripts/build.sh` as `sh ./scripts/build.sh` instead of executing the file directly. This avoids `exit code 126` when the executable bit was lost while the repository was created from a ZIP or copied from Windows.
-
-This project has no third-party Go modules, so `actions/setup-go` caching is disabled. A missing `go.sum` is therefore normal and should not produce a cache warning.
-
-If a tag such as `v1.0.0` already exists but its first release workflow failed, push the workflow fix to `main`, then open **Actions → Release → Run workflow**, enter the existing tag (`v1.0.0`), and run it. The workflow will create the missing GitHub Release (or update it) and attach `mailpush.koplugin-bilingual.zip`.
-
-### Устранение проблем с GitHub Actions Release
-
-Workflow запускает `scripts/build.sh` через `sh ./scripts/build.sh`, а не напрямую. Это предотвращает ошибку `exit code 126`, если executable-bit файла потерялся при создании репозитория из ZIP или при копировании через Windows.
-
-В проекте нет сторонних Go-модулей, поэтому кеш `actions/setup-go` отключён. Отсутствие `go.sum` для этого проекта нормально.
-
-Если тег, например `v1.0.0`, уже существует, но первый workflow релиза завершился ошибкой, сначала отправьте исправление workflow в `main`, затем откройте **Actions → Release → Run workflow**, укажите существующий тег (`v1.0.0`) и запустите workflow. Он создаст отсутствующий GitHub Release (или обновит существующий) и прикрепит `mailpush.koplugin-bilingual.zip`.
+Полное техническое описание для разработчиков и AI-агентов: [`AGENTS.md`](AGENTS.md).

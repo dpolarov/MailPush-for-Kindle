@@ -32,11 +32,25 @@ jobs:
           go-version: "1.23.x"
           cache: false
 
+      - name: Install Lua 5.1 compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+
       - name: Test
         run: go test ./...
 
       - name: Vet
         run: go vet ./...
+
+      - name: Check plugin Lua syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          LUAC="$(command -v luac5.1 || command -v luac)"
+          "$LUAC" -p mailpush.koplugin/main.lua
+          "$LUAC" -p mailpush.koplugin/updater.lua
+          "$LUAC" -p mailpush.koplugin/updater_download.lua
 
       - name: Resolve release tag
         id: release_tag
@@ -63,7 +77,7 @@ jobs:
           VERSION: ${{ steps.release_tag.outputs.tag }}
         run: sh ./scripts/build.sh
 
-      - name: Verify embedded version and archive
+      - name: Verify embedded version and updater package
         shell: bash
         env:
           EXPECTED_VERSION: ${{ steps.release_tag.outputs.tag }}
@@ -74,7 +88,36 @@ jobs:
           ACTUAL_VERSION="$(dist/mailpush-linux-amd64 version | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"])')"
           test "$ACTUAL_VERSION" = "$EXPECTED_VERSION"
           unzip -t dist/mailpush.koplugin.zip
-          unzip -l dist/mailpush.koplugin.zip | grep -q 'mailpush.koplugin/bin/mailpush'
+          test "$(unzip -p dist/mailpush.koplugin.zip mailpush.koplugin/VERSION | tr -d '\r\n')" = "$EXPECTED_VERSION"
+          python3 - <<'PY'
+          import pathlib, zipfile
+
+          archive = pathlib.Path("dist/mailpush.koplugin.zip")
+          required = {
+              "mailpush.koplugin/VERSION",
+              "mailpush.koplugin/_meta.lua",
+              "mailpush.koplugin/main.lua",
+              "mailpush.koplugin/updater.lua",
+              "mailpush.koplugin/updater_download.lua",
+              "mailpush.koplugin/config.default.json",
+              "mailpush.koplugin/cacert.pem",
+              "mailpush.koplugin/bin/mailpush",
+          }
+          with zipfile.ZipFile(archive) as zf:
+              infos = zf.infolist()
+              names = {i.filename.rstrip("/") for i in infos}
+              missing = required - names
+              assert not missing, f"missing updater files: {sorted(missing)}"
+              assert len(infos) <= 256, f"too many archive entries: {len(infos)}"
+              total = sum(i.file_size for i in infos)
+              assert total <= 64 * 1024 * 1024, f"unpacked size too large: {total}"
+              for info in infos:
+                  name = info.filename.replace("\\", "/")
+                  assert not name.startswith("/"), f"absolute archive path: {name}"
+                  assert ".." not in pathlib.PurePosixPath(name).parts, f"unsafe archive path: {name}"
+                  assert name == "mailpush.koplugin/" or name.startswith("mailpush.koplugin/"), f"unexpected archive root: {name}"
+          print("Updater archive contract verified")
+          PY
           echo "Verified embedded version: $ACTUAL_VERSION"
 
       - name: Rename release archive
