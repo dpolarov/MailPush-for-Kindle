@@ -19,7 +19,9 @@ COPY mailpush.koplugin/_meta.lua mailpush.koplugin/main.lua mailpush.koplugin/up
 RUN cp /etc/ssl/certs/ca-certificates.crt /work/mailpush.koplugin/cacert.pem
 RUN chmod 755 /work/mailpush.koplugin/bin/mailpush && \
     mkdir -p /dist && \
-    cd /work && zip -9 -r /dist/mailpush.koplugin.zip mailpush.koplugin >/dev/null && \
+    cd /work && \
+    zip -9 -r /dist/mailpush.koplugin.zip mailpush.koplugin >/dev/null && \
+    tar -cf /dist/mailpush.koplugin-update.tar mailpush.koplugin && \
     cp /work/host/mailpush-linux-amd64 /dist/
 
 FROM scratch AS export
