@@ -59,21 +59,10 @@ jobs:
           VERSION: ${{ steps.release_tag.outputs.tag }}
         run: sh ./scripts/build.sh
 
-      - name: Verify embedded version and archives
-        shell: bash
+      - name: End-to-end package verification
         env:
-          EXPECTED_VERSION: ${{ steps.release_tag.outputs.tag }}
-        run: |
-          set -euo pipefail
-          test -s dist/mailpush.koplugin.zip
-          test -s dist/mailpush.koplugin-update.tar
-          test -x dist/mailpush-linux-amd64
-          ACTUAL_VERSION="$(dist/mailpush-linux-amd64 version | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"])')"
-          test "$ACTUAL_VERSION" = "$EXPECTED_VERSION"
-          unzip -t dist/mailpush.koplugin.zip
-          tar -tf dist/mailpush.koplugin-update.tar | grep -q '^mailpush.koplugin/bin/mailpush$'
-          tar -tf dist/mailpush.koplugin-update.tar | grep -q '^mailpush.koplugin/main.lua$'
-          echo "Verified embedded version: $ACTUAL_VERSION"
+          VERSION: ${{ steps.release_tag.outputs.tag }}
+        run: sh ./scripts/verify-package.sh "$VERSION"
 
       - name: Rename install archive
         run: mv dist/mailpush.koplugin.zip dist/mailpush.koplugin-bilingual.zip
