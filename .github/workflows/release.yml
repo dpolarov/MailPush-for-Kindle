@@ -123,13 +123,6 @@ jobs:
       - name: Rename release archive
         run: mv dist/mailpush.koplugin.zip dist/mailpush.koplugin-bilingual.zip
 
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mailpush-koplugin-${{ steps.release_tag.outputs.tag }}
-          path: dist/mailpush.koplugin-bilingual.zip
-          if-no-files-found: error
-
       - name: Create tag and GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
